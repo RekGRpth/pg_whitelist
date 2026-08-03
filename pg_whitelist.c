@@ -19,12 +19,15 @@ static void pg_whitelist_deny(const char *fileurl) {
 /* Entries are comma-separated: "file:///dir/" (trailing slash) allows
  * anything under that directory, "file:///dir/file" allows only that exact
  * file, "https://host/path" allows any URL with that prefix. */
-void pg_whitelist_check_url(const char *fileurl) {
+void pg_whitelist_check_url(const char *fileurl, bool privileged) {
     char *list, *entry, *saveptr;
     size_t len;
     bool allowed = false;
     if (strncmp(fileurl, "http://", 7) && strncmp(fileurl, "https://", 8)) return;
-    if (!pg_whitelist_value || !pg_whitelist_value[0]) return;
+    if (!pg_whitelist_value || !pg_whitelist_value[0]) {
+        if (privileged) return;
+        pg_whitelist_deny(fileurl);
+    }
     list = pstrdup(pg_whitelist_value);
     for (entry = strtok_r(list, ",", &saveptr); entry && !allowed; entry = strtok_r(NULL, ",", &saveptr)) {
         while (isspace((unsigned char)*entry)) entry++;
@@ -36,14 +39,17 @@ void pg_whitelist_check_url(const char *fileurl) {
     if (!allowed) pg_whitelist_deny(fileurl);
 }
 
-void pg_whitelist_check_local(const char *fileurl, const char *realname) {
+void pg_whitelist_check_local(const char *fileurl, const char *realname, bool privileged) {
     char resolved[PATH_MAX];
     char resolved_entry[PATH_MAX];
     char *list, *entry, *saveptr;
     size_t len;
     bool allowed = false;
     if (!strncmp(fileurl, "http://", 7) || !strncmp(fileurl, "https://", 8)) return;
-    if (!pg_whitelist_value || !pg_whitelist_value[0]) return;
+    if (!pg_whitelist_value || !pg_whitelist_value[0]) {
+        if (privileged) return;
+        pg_whitelist_deny(fileurl);
+    }
     if (!realpath(realname, resolved)) ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("!realpath(\"%s\")", realname)));
     list = pstrdup(pg_whitelist_value);
     for (entry = strtok_r(list, ",", &saveptr); entry && !allowed; entry = strtok_r(NULL, ",", &saveptr)) {

@@ -1,50 +1,109 @@
 CREATE EXTENSION pg_whitelist_test;
-SELECT pg_whitelist_test_check_url('https://example.com/anything');
+-- privileged=true, no whitelist configured: always allowed.
+SELECT pg_whitelist_test_check_url('https://example.com/anything', true);
  pg_whitelist_test_check_url 
 -----------------------------
  t
 (1 row)
 
+-- privileged=false, no whitelist configured: always denied -- whitelist is
+-- the caller's only possible grant, and there isn't one.
+SELECT pg_whitelist_test_check_url('https://example.com/anything', false);
+ERROR:  permission denied to access "https://example.com/anything"
+DETAIL:  whitelist does not permit this file or URL for the current role.
 SET pg_whitelist_test.whitelist = 'https://good.example.com/';
-SELECT pg_whitelist_test_check_url('https://good.example.com/page');
+-- privileged=true: whitelist narrows -- matches pass through, non-matches
+-- are denied even though the caller would otherwise be authorized.
+SELECT pg_whitelist_test_check_url('https://good.example.com/page', true);
  pg_whitelist_test_check_url 
 -----------------------------
  t
 (1 row)
 
-SELECT pg_whitelist_test_check_url('https://evil.example.com/page');
+SELECT pg_whitelist_test_check_url('https://evil.example.com/page', true);
 ERROR:  permission denied to access "https://evil.example.com/page"
 DETAIL:  whitelist does not permit this file or URL for the current role.
-SELECT pg_whitelist_test_check_url('/etc/passwd');
+-- privileged=false: whitelist is the caller's sole grant -- same
+-- allow/deny split as above, but for the opposite reason.
+SELECT pg_whitelist_test_check_url('https://good.example.com/page', false);
+ pg_whitelist_test_check_url 
+-----------------------------
+ t
+(1 row)
+
+SELECT pg_whitelist_test_check_url('https://evil.example.com/page', false);
+ERROR:  permission denied to access "https://evil.example.com/page"
+DETAIL:  whitelist does not permit this file or URL for the current role.
+-- Non-URL input is not this function's concern -- always a no-op pass,
+-- regardless of privileged.
+SELECT pg_whitelist_test_check_url('/etc/passwd', true);
+ pg_whitelist_test_check_url 
+-----------------------------
+ t
+(1 row)
+
+SELECT pg_whitelist_test_check_url('/etc/passwd', false);
  pg_whitelist_test_check_url 
 -----------------------------
  t
 (1 row)
 
 COPY (SELECT '') TO '/tmp/pg_whitelist_test_allowed.txt';
-SET pg_whitelist_test.whitelist = 'file:///tmp/pg_whitelist_test_allowed.txt';
-SELECT pg_whitelist_test_check_local('/tmp/pg_whitelist_test_allowed.txt', '/tmp/pg_whitelist_test_allowed.txt');
+SET pg_whitelist_test.whitelist = '';
+-- privileged=true, no whitelist configured: always allowed.
+SELECT pg_whitelist_test_check_local('/tmp/pg_whitelist_test_allowed.txt', '/tmp/pg_whitelist_test_allowed.txt', true);
  pg_whitelist_test_check_local 
 -------------------------------
  t
 (1 row)
 
-SELECT pg_whitelist_test_check_local('/etc/passwd', '/etc/passwd');
+-- privileged=false, no whitelist configured: always denied.
+SELECT pg_whitelist_test_check_local('/tmp/pg_whitelist_test_allowed.txt', '/tmp/pg_whitelist_test_allowed.txt', false);
+ERROR:  permission denied to access "/tmp/pg_whitelist_test_allowed.txt"
+DETAIL:  whitelist does not permit this file or URL for the current role.
+SET pg_whitelist_test.whitelist = 'file:///tmp/pg_whitelist_test_allowed.txt';
+SELECT pg_whitelist_test_check_local('/tmp/pg_whitelist_test_allowed.txt', '/tmp/pg_whitelist_test_allowed.txt', true);
+ pg_whitelist_test_check_local 
+-------------------------------
+ t
+(1 row)
+
+SELECT pg_whitelist_test_check_local('/etc/passwd', '/etc/passwd', true);
 ERROR:  permission denied to access "/etc/passwd"
 DETAIL:  whitelist does not permit this file or URL for the current role.
-SELECT pg_whitelist_test_check_local('https://evil.example.com/page', '/tmp/pg_whitelist_test_allowed.txt');
+SELECT pg_whitelist_test_check_local('/tmp/pg_whitelist_test_allowed.txt', '/tmp/pg_whitelist_test_allowed.txt', false);
  pg_whitelist_test_check_local 
 -------------------------------
  t
 (1 row)
 
+SELECT pg_whitelist_test_check_local('/etc/passwd', '/etc/passwd', false);
+ERROR:  permission denied to access "/etc/passwd"
+DETAIL:  whitelist does not permit this file or URL for the current role.
+-- URL input is not this function's concern -- always a no-op pass regardless
+-- of whitelist contents or privileged.
+SELECT pg_whitelist_test_check_local('https://evil.example.com/page', '/tmp/pg_whitelist_test_allowed.txt', true);
+ pg_whitelist_test_check_local 
+-------------------------------
+ t
+(1 row)
+
+SELECT pg_whitelist_test_check_local('https://evil.example.com/page', '/tmp/pg_whitelist_test_allowed.txt', false);
+ pg_whitelist_test_check_local 
+-------------------------------
+ t
+(1 row)
+
+-- Directory entry (trailing slash): anything under it is allowed, but ".."
+-- can't be used to climb back out, since the resolved path is
+-- realpath()-canonicalized before comparison.
 SET pg_whitelist_test.whitelist = 'file:///tmp/';
-SELECT pg_whitelist_test_check_local('/tmp/pg_whitelist_test_allowed.txt', '/tmp/pg_whitelist_test_allowed.txt');
+SELECT pg_whitelist_test_check_local('/tmp/pg_whitelist_test_allowed.txt', '/tmp/pg_whitelist_test_allowed.txt', false);
  pg_whitelist_test_check_local 
 -------------------------------
  t
 (1 row)
 
-SELECT pg_whitelist_test_check_local('/tmp/../etc/passwd', '/tmp/../etc/passwd');
+SELECT pg_whitelist_test_check_local('/tmp/../etc/passwd', '/tmp/../etc/passwd', false);
 ERROR:  permission denied to access "/tmp/../etc/passwd"
 DETAIL:  whitelist does not permit this file or URL for the current role.

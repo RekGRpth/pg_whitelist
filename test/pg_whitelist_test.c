@@ -14,7 +14,8 @@ void _PG_init(void); void _PG_init(void) {
 PG_FUNCTION_INFO_V1(pg_whitelist_test_check_url);
 Datum pg_whitelist_test_check_url(PG_FUNCTION_ARGS) {
     char *fileurl = TextDatumGetCString(PG_GETARG_DATUM(0));
-    pg_whitelist_check_url(fileurl);
+    bool privileged = PG_GETARG_BOOL(1);
+    pg_whitelist_check_url(fileurl, privileged);
     pfree(fileurl);
     PG_RETURN_BOOL(true);
 }
@@ -23,7 +24,8 @@ PG_FUNCTION_INFO_V1(pg_whitelist_test_check_local);
 Datum pg_whitelist_test_check_local(PG_FUNCTION_ARGS) {
     char *fileurl = TextDatumGetCString(PG_GETARG_DATUM(0));
     char *realname = TextDatumGetCString(PG_GETARG_DATUM(1));
-    pg_whitelist_check_local(fileurl, realname);
+    bool privileged = PG_GETARG_BOOL(2);
+    pg_whitelist_check_local(fileurl, realname, privileged);
     pfree(fileurl);
     pfree(realname);
     PG_RETURN_BOOL(true);
