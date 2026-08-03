@@ -8,11 +8,20 @@
  * SET. */
 void pg_whitelist_init(const char *guc_name);
 
-/* Raises ERROR if fileurl (or, for local paths, realname) is not permitted
- * by the GUC registered with pg_whitelist_init(). realname must be an
- * existing local path when fileurl is not an http(s) URL, since it is
- * resolved with realpath() before comparison so a whitelisted directory
- * can't be escaped via "..". A no-op if the GUC is empty/unset. */
-void pg_whitelist_check(const char *fileurl, const char *realname);
+/* Call BEFORE resolving fileurl (e.g. before htmldoc's file_find(), which
+ * performs the actual network request for an http(s) URL): raises ERROR if
+ * fileurl is an http(s) URL not permitted by the GUC registered with
+ * pg_whitelist_init(), so a disallowed host is rejected before it's ever
+ * contacted. No-op if fileurl is not an http(s) URL -- see
+ * pg_whitelist_check_local() for that case -- or if the GUC is empty/unset. */
+void pg_whitelist_check_url(const char *fileurl);
+
+/* Call AFTER fileurl has been resolved to an existing local path (realname),
+ * for the non-URL case: raises ERROR if realname is not permitted by the
+ * GUC. realname is canonicalized with realpath() before comparison so a
+ * whitelisted directory can't be escaped via "..". No-op if fileurl is an
+ * http(s) URL (already handled by pg_whitelist_check_url()) or if the GUC is
+ * empty/unset. */
+void pg_whitelist_check_local(const char *fileurl, const char *realname);
 
 #endif
