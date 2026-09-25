@@ -16,9 +16,21 @@ static void pg_whitelist_deny(const char *fileurl) {
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("permission denied to access \"%s\"", fileurl), errdetail("whitelist does not permit this file or URL for the current role.")));
 }
 
+/* fileurl starts with entry, and not just textually: unless entry ends in '/',
+ * the match must end at a URL delimiter, so "https://host" doesn't match
+ * "https://host.evil.net/" or "https://host@evil.net/", nor "https://host/api"
+ * match "https://host/api2". */
+static bool pg_whitelist_url_prefix(const char *fileurl, const char *entry) {
+    size_t len = strlen(entry);
+    if (strncmp(fileurl, entry, len)) return false;
+    if (len > 0 && entry[len - 1] == '/') return true;
+    return fileurl[len] == '\0' || fileurl[len] == '/' || fileurl[len] == '?' || fileurl[len] == '#';
+}
+
 /* Entries are comma-separated: "file:///dir/" (trailing slash) allows
  * anything under that directory, "file:///dir/file" allows only that exact
- * file, "https://host/path" allows any URL with that prefix. */
+ * file, "https://host/path" allows any URL with that prefix, matched up to a
+ * path segment boundary (see pg_whitelist_url_prefix()). */
 void pg_whitelist_check_url(const char *fileurl, bool privileged) {
     char *list, *entry, *saveptr;
     size_t len;
@@ -33,7 +45,7 @@ void pg_whitelist_check_url(const char *fileurl, bool privileged) {
         while (isspace((unsigned char)*entry)) entry++;
         len = strlen(entry);
         while (len > 0 && isspace((unsigned char)entry[len - 1])) entry[--len] = '\0';
-        if ((!strncmp(entry, "http://", 7) || !strncmp(entry, "https://", 8)) && !strncmp(fileurl, entry, strlen(entry))) allowed = true;
+        if ((!strncmp(entry, "http://", 7) || !strncmp(entry, "https://", 8)) && pg_whitelist_url_prefix(fileurl, entry)) allowed = true;
     }
     pfree(list);
     if (!allowed) pg_whitelist_deny(fileurl);
