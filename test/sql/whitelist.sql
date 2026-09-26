@@ -22,17 +22,26 @@ SELECT pg_whitelist_test_check_url('https://evil.example.com/page', false);
 -- An entry without a trailing slash still only matches up to a URL
 -- delimiter ('/', '?', '#' or the end), not any textual prefix: another
 -- host that merely starts with the same name, userinfo pointing elsewhere,
--- another port or a longer path segment are all denied.
+-- another port or a longer path segment are all denied. So is an '@' after
+-- a '?' or '#' delimiter but before the first '/': libcups would take
+-- everything before it as userinfo and connect to the host after it. Once
+-- the entry itself contains a path, the host is already fixed and a later
+-- '@' is harmless.
 SET pg_whitelist_test.whitelist = 'https://good.example.com,https://other.example.com/api';
 SELECT pg_whitelist_test_check_url('https://good.example.com', false);
 SELECT pg_whitelist_test_check_url('https://good.example.com/page', false);
 SELECT pg_whitelist_test_check_url('https://good.example.com?q=1', false);
 SELECT pg_whitelist_test_check_url('https://good.example.com#frag', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com?@evil.net/page', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com#@evil.net/page', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com?q=1@evil.net/page', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com?q=1/@not-a-host', false);
 SELECT pg_whitelist_test_check_url('https://good.example.com.evil.net/page', false);
 SELECT pg_whitelist_test_check_url('https://good.example.com@evil.net/page', false);
 SELECT pg_whitelist_test_check_url('https://good.example.com:8443/page', false);
 SELECT pg_whitelist_test_check_url('https://other.example.com/api/v1', false);
 SELECT pg_whitelist_test_check_url('https://other.example.com/api2', false);
+SELECT pg_whitelist_test_check_url('https://other.example.com/api?@evil.net/page', false);
 SET pg_whitelist_test.whitelist = 'https://good.example.com/';
 
 -- A scheme-relative "//host/..." is fetched over http by htmldoc, so it is a

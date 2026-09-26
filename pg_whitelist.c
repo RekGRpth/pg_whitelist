@@ -29,12 +29,20 @@ static bool pg_whitelist_is_url(const char *s) {
 /* fileurl starts with entry, and not just textually: unless entry ends in '/',
  * the match must end at a URL delimiter, so "https://host" doesn't match
  * "https://host.evil.net/" or "https://host@evil.net/", nor "https://host/api"
- * match "https://host/api2". */
+ * match "https://host/api2". And if entry names only a host (no path), the
+ * rest of fileurl's authority -- up to its first '/' -- must not contain '@':
+ * libcups's httpSeparateURI() (which htmldoc fetches through) takes
+ * everything before an '@' that precedes the first '/' as userinfo, so
+ * "https://host?@evil.net/" or "https://host#@evil.net/" would connect to
+ * evil.net. */
 static bool pg_whitelist_url_prefix(const char *fileurl, const char *entry) {
     size_t len = strlen(entry);
+    const char *rest = fileurl + len;
     if (strncmp(fileurl, entry, len)) return false;
     if (len > 0 && entry[len - 1] == '/') return true;
-    return fileurl[len] == '\0' || fileurl[len] == '/' || fileurl[len] == '?' || fileurl[len] == '#';
+    if (*rest != '\0' && *rest != '/' && *rest != '?' && *rest != '#') return false;
+    if (!strchr(strstr(entry, "://") + 3, '/') && rest[strcspn(rest, "@/")] == '@') return false;
+    return true;
 }
 
 /* Entries are comma-separated: "file:///dir/" (trailing slash) allows
