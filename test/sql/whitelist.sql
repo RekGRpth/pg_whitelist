@@ -58,6 +58,24 @@ SELECT pg_whitelist_test_check_url('http://plain.example.com:80?@evil.net/page',
 SELECT pg_whitelist_test_check_url('http://plain.example.com:8080/page', false);
 SET pg_whitelist_test.whitelist = 'https://good.example.com/';
 
+-- An entry with a path confines to that path only if dot segments can't climb
+-- out of it: libcups sends them as written (decoding %2E and %2F first), and
+-- servers commonly resolve them. So a URL with a "." or ".." segment in its
+-- path never matches an entry below the root. Dots that aren't a whole
+-- segment, and dots in the query, are fine; a root entry has nothing to climb
+-- out of and is unaffected.
+SET pg_whitelist_test.whitelist = 'https://good.example.com/reports/';
+SELECT pg_whitelist_test_check_url('https://good.example.com/reports/a.html', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com/reports/../secret.html', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com/reports/%2E%2E/secret.html', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com/reports/..%2Fsecret.html', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com/reports/sub/..', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com/reports/./a.html', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com/reports/..a.html', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com/reports/a.html?next=../secret.html', false);
+SET pg_whitelist_test.whitelist = 'https://good.example.com/';
+SELECT pg_whitelist_test_check_url('https://good.example.com/reports/../secret.html', false);
+
 -- A scheme-relative "//host/..." is fetched over http by htmldoc, so it is a
 -- URL too, not a local path: it never matches an entry (entries always carry
 -- a scheme), so only privileged with no whitelist may use it.
