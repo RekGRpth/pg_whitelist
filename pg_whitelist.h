@@ -20,14 +20,17 @@ void pg_whitelist_init(const char *guc_name);
  * Call pg_whitelist_check_url() BEFORE resolving fileurl (e.g. before
  * htmldoc's file_find(), which performs the actual network request for an
  * http(s) URL), so a disallowed host is rejected before it's ever
- * contacted. No-op if fileurl is not an http(s) URL -- see
+ * contacted. A URL here is anything htmldoc would fetch over the network:
+ * "http:", "https:" or scheme-relative "//" prefixed. No-op if fileurl is not
+ * such a URL -- see
  * pg_whitelist_check_local() for that case. */
 void pg_whitelist_check_url(const char *fileurl, bool privileged);
 
 /* Call AFTER fileurl has been resolved to an existing local path (realname),
  * for the non-URL case: realname is canonicalized with realpath() before
  * comparison so a whitelisted directory can't be escaped via "..". No-op if
- * fileurl is an http(s) URL (handled by pg_whitelist_check_url() instead). */
+ * fileurl is a URL in pg_whitelist_check_url()'s sense (handled there
+ * instead). */
 void pg_whitelist_check_local(const char *fileurl, const char *realname, bool privileged);
 
 #endif

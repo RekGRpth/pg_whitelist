@@ -35,6 +35,17 @@ SELECT pg_whitelist_test_check_url('https://other.example.com/api/v1', false);
 SELECT pg_whitelist_test_check_url('https://other.example.com/api2', false);
 SET pg_whitelist_test.whitelist = 'https://good.example.com/';
 
+-- A scheme-relative "//host/..." is fetched over http by htmldoc, so it is a
+-- URL too, not a local path: it never matches an entry (entries always carry
+-- a scheme), so only privileged with no whitelist may use it.
+SELECT pg_whitelist_test_check_url('//good.example.com/page', true);
+SELECT pg_whitelist_test_check_url('//good.example.com/page', false);
+SELECT pg_whitelist_test_check_url('//evil.example.com/page', true);
+SET pg_whitelist_test.whitelist = '';
+SELECT pg_whitelist_test_check_url('//evil.example.com/page', true);
+SELECT pg_whitelist_test_check_url('//evil.example.com/page', false);
+SET pg_whitelist_test.whitelist = 'https://good.example.com/';
+
 -- Non-URL input is not this function's concern -- always a no-op pass,
 -- regardless of privileged.
 SELECT pg_whitelist_test_check_url('/etc/passwd', true);
@@ -60,6 +71,7 @@ SELECT pg_whitelist_test_check_local('/etc/passwd', '/etc/passwd', false);
 -- of whitelist contents or privileged.
 SELECT pg_whitelist_test_check_local('https://evil.example.com/page', '/tmp/pg_whitelist_test_allowed.txt', true);
 SELECT pg_whitelist_test_check_local('https://evil.example.com/page', '/tmp/pg_whitelist_test_allowed.txt', false);
+SELECT pg_whitelist_test_check_local('//evil.example.com/page', '/tmp/pg_whitelist_test_allowed.txt', false);
 
 -- Directory entry (trailing slash): anything under it is allowed, but ".."
 -- can't be used to climb back out, since the resolved path is
