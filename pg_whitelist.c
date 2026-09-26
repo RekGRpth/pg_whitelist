@@ -45,27 +45,48 @@ static bool pg_whitelist_url_prefix(const char *fileurl, const char *entry) {
     return true;
 }
 
+/* Drop a default port -- ":80" for http, ":443" for https -- from the end of
+ * url's authority, in place, so "https://host:443/x" and "https://host/x"
+ * compare equal. libcups's httpAssembleURI() always spells the port out, so a
+ * URL rebuilt by it (as htmldoc's file-access callback reports every request)
+ * would otherwise never match an entry written the usual way. */
+static void pg_whitelist_drop_default_port(char *url) {
+    char *auth, *end, *colon;
+    if (!(auth = strstr(url, "://"))) return;
+    auth += 3;
+    end = auth + strcspn(auth, "/?#");
+    for (colon = end; colon > auth && isdigit((unsigned char)colon[-1]); colon--);
+    if (colon == end || colon == auth || colon[-1] != ':') return;
+    colon--;
+    if ((!strncmp(url, "http://", 7) && end - colon == 3 && !strncmp(colon, ":80", 3)) || (!strncmp(url, "https://", 8) && end - colon == 4 && !strncmp(colon, ":443", 4))) memmove(colon, end, strlen(end) + 1);
+}
+
 /* Entries are comma-separated: "file:///dir/" (trailing slash) allows
  * anything under that directory, "file:///dir/file" allows only that exact
  * file, "https://host/path" allows any URL with that prefix, matched up to a
  * path segment boundary (see pg_whitelist_url_prefix()). A scheme-relative
  * "//host/..." fileurl never matches an entry (entries always carry an
  * explicit scheme), so only a privileged caller with no whitelist may use
- * one. */
+ * one. A default port is ignored on both sides (see
+ * pg_whitelist_drop_default_port()). */
 bool pg_whitelist_allows_url(const char *fileurl, bool privileged) {
-    char *list, *entry, *saveptr;
+    char *list, *entry, *saveptr, *url;
     size_t len;
     bool allowed = false;
     if (!pg_whitelist_is_url(fileurl)) return true;
     if (!pg_whitelist_value || !pg_whitelist_value[0]) return privileged;
+    url = pstrdup(fileurl);
+    pg_whitelist_drop_default_port(url);
     list = pstrdup(pg_whitelist_value);
     for (entry = strtok_r(list, ",", &saveptr); entry && !allowed; entry = strtok_r(NULL, ",", &saveptr)) {
         while (isspace((unsigned char)*entry)) entry++;
         len = strlen(entry);
         while (len > 0 && isspace((unsigned char)entry[len - 1])) entry[--len] = '\0';
-        if ((!strncmp(entry, "http://", 7) || !strncmp(entry, "https://", 8)) && pg_whitelist_url_prefix(fileurl, entry)) allowed = true;
+        pg_whitelist_drop_default_port(entry);
+        if ((!strncmp(entry, "http://", 7) || !strncmp(entry, "https://", 8)) && pg_whitelist_url_prefix(url, entry)) allowed = true;
     }
     pfree(list);
+    pfree(url);
     return allowed;
 }
 

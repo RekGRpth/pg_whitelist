@@ -44,6 +44,20 @@ SELECT pg_whitelist_test_check_url('https://other.example.com/api2', false);
 SELECT pg_whitelist_test_check_url('https://other.example.com/api?@evil.net/page', false);
 SET pg_whitelist_test.whitelist = 'https://good.example.com/';
 
+-- A default port is the same URL spelled differently, on either side: libcups
+-- spells it out in every URL it rebuilds, so "https://host/" must match
+-- "https://host:443/..." and vice versa. Any other port, including the other
+-- scheme's default, is still a different URL.
+SELECT pg_whitelist_test_check_url('https://good.example.com:443/page', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com:80/page', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com:4430/page', false);
+SET pg_whitelist_test.whitelist = 'https://good.example.com:443/,http://plain.example.com';
+SELECT pg_whitelist_test_check_url('https://good.example.com/page', false);
+SELECT pg_whitelist_test_check_url('http://plain.example.com:80/page', false);
+SELECT pg_whitelist_test_check_url('http://plain.example.com:80?@evil.net/page', false);
+SELECT pg_whitelist_test_check_url('http://plain.example.com:8080/page', false);
+SET pg_whitelist_test.whitelist = 'https://good.example.com/';
+
 -- A scheme-relative "//host/..." is fetched over http by htmldoc, so it is a
 -- URL too, not a local path: it never matches an entry (entries always carry
 -- a scheme), so only privileged with no whitelist may use it.
