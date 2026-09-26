@@ -9,7 +9,7 @@
 static char *pg_whitelist_value = NULL;
 
 void pg_whitelist_init(const char *guc_name) {
-    DefineCustomStringVariable(guc_name, "Comma-separated file:// and http(s):// prefixes that may be accessed. Empty/unset allows anything.", NULL, &pg_whitelist_value, NULL, PGC_SUSET, 0, NULL, NULL, NULL);
+    DefineCustomStringVariable(guc_name, "Comma-separated file:// and http(s):// prefixes that may be accessed.", "For a privileged caller a non-empty list narrows access and an empty/unset one allows anything; for any other caller the list is the only grant and an empty/unset one denies everything.", &pg_whitelist_value, NULL, PGC_SUSET, 0, NULL, NULL, NULL);
 }
 
 static void pg_whitelist_deny(const char *fileurl) {
