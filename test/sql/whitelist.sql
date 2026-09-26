@@ -70,6 +70,23 @@ SELECT pg_whitelist_test_check_url('https://someone@other.example.com/page', fal
 SELECT pg_whitelist_test_check_url('https://good.example.com:pass@evil.net/page', false);
 SET pg_whitelist_test.whitelist = 'https://good.example.com/';
 
+-- Paths are compared percent-decoded, on both sides: libcups decodes a URL's
+-- path before sending it, re-encoding only what it must, and htmldoc's
+-- file-access callback reports it that way -- so "%7E" and "~" are the same
+-- path however either side spells it, and a decoded "%2F" is a real "/".
+-- Decoding happens once, as libcups does it: "%252E" is a literal "%2E". A
+-- decoded "%23" is a "#" libcups sends as is, not the start of a fragment, so
+-- dot segments after it still count.
+SET pg_whitelist_test.whitelist = 'https://good.example.com/%7Euser/,https://other.example.com/~staff/';
+SELECT pg_whitelist_test_check_url('https://good.example.com/~user/a.html', false);
+SELECT pg_whitelist_test_check_url('https://good.example.com/%7euser/a.html', false);
+SELECT pg_whitelist_test_check_url('https://other.example.com/%7Estaff/a.html', false);
+SELECT pg_whitelist_test_check_url('https://other.example.com/%7Estaffer/a.html', false);
+SELECT pg_whitelist_test_check_url('https://other.example.com/~staff%2F..%2Fsecret.html', false);
+SELECT pg_whitelist_test_check_url('https://other.example.com/~staff/%252E%252E/a.html', false);
+SELECT pg_whitelist_test_check_url('https://other.example.com/~staff/%23/../secret.html', false);
+SET pg_whitelist_test.whitelist = 'https://good.example.com/';
+
 -- An entry with a path confines to that path only if dot segments can't climb
 -- out of it: libcups sends them as written (decoding %2E and %2F first), and
 -- servers commonly resolve them. So a URL with a "." or ".." segment in its

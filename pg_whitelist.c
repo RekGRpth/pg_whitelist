@@ -78,37 +78,46 @@ static void pg_whitelist_drop_default_port(char *url) {
     if ((!strncmp(url, "http://", 7) && end - colon == 3 && !strncmp(colon, ":80", 3)) || (!strncmp(url, "https://", 8) && end - colon == 4 && !strncmp(colon, ":443", 4))) memmove(colon, end, strlen(end) + 1);
 }
 
-/* Whether url's path, percent-decoded as libcups decodes it before sending,
- * has a "." or ".." segment. A server that resolves those lets
- * "https://host/dir/../x" out of an entry for "https://host/dir/", so such a
- * URL may not match an entry with a path below the root (see
- * pg_whitelist_allows_url()). The query and fragment aren't part of the path
- * and aren't looked at. */
-static bool pg_whitelist_has_dot_segment(const char *url) {
-    const char *auth, *p, *end;
-    char *path, *q, *seg;
-    size_t len;
-    bool found = false;
-    if (!(auth = strstr(url, "://"))) return false;
+/* Percent-decode everything after url's authority, in place, the way
+ * libcups's httpSeparateURI() decodes it before sending: libcups re-encodes
+ * only what it must, so "%7E" goes out as "~", "%2F" as "/" and "%3F" as a
+ * real "?". Comparing decoded paths makes an entry match however either side
+ * happened to spell them. "%00" is left alone, since libcups stops at it. */
+static void pg_whitelist_decode_resource(char *url) {
+    char *auth, *p, *q;
+    if (!(auth = strstr(url, "://"))) return;
     auth += 3;
-    p = auth + strcspn(auth, "/?#");
-    if (*p != '/') return false;
-    end = p + strcspn(p, "?#");
-    path = palloc(end - p + 1);
-    for (q = path; p < end; p++) {
-        if (*p == '%' && isxdigit((unsigned char)p[1]) && isxdigit((unsigned char)p[2])) {
+    for (p = q = auth + strcspn(auth, "/?#"); *p; p++) {
+        if (*p == '%' && isxdigit((unsigned char)p[1]) && isxdigit((unsigned char)p[2]) && (p[1] != '0' || p[2] != '0')) {
             char hex[3] = {p[1], p[2], '\0'};
             *q++ = (char)strtol(hex, NULL, 16);
             p += 2;
         } else *q++ = *p;
     }
     *q = '\0';
-    for (seg = strchr(path, '/'); seg && !found; seg = strchr(seg, '/')) {
-        len = strcspn(++seg, "/");
-        if ((len == 1 && seg[0] == '.') || (len == 2 && seg[0] == '.' && seg[1] == '.')) found = true;
+}
+
+/* Whether url's path -- already percent-decoded, see
+ * pg_whitelist_decode_resource() -- has a "." or ".." segment. A server that
+ * resolves those lets "https://host/dir/../x" out of an entry for
+ * "https://host/dir/", so such a URL may not match an entry with a path below
+ * the root (see pg_whitelist_allows_url()). The query isn't part of the path
+ * and isn't looked at; a "#" is, though, since libcups sends it as is -- one
+ * decoded from "%23" in particular -- and some servers take it literally and
+ * resolve dot segments after it. */
+static bool pg_whitelist_has_dot_segment(const char *url) {
+    const char *auth, *seg, *end;
+    size_t len;
+    if (!(auth = strstr(url, "://"))) return false;
+    auth += 3;
+    seg = auth + strcspn(auth, "/?#");
+    if (*seg != '/') return false;
+    end = seg + strcspn(seg, "?");
+    for (; seg && seg < end; seg = memchr(seg, '/', end - seg)) {
+        len = strcspn(++seg, "/?");
+        if ((len == 1 && seg[0] == '.') || (len == 2 && seg[0] == '.' && seg[1] == '.')) return true;
     }
-    pfree(path);
-    return found;
+    return false;
 }
 
 /* Whether entry names a path below the root, i.e. something a dot segment
@@ -124,8 +133,9 @@ static bool pg_whitelist_entry_has_path(const char *entry) {
  * path segment boundary (see pg_whitelist_url_prefix()). A scheme-relative
  * "//host/..." fileurl never matches an entry (entries always carry an
  * explicit scheme), so only a privileged caller with no whitelist may use
- * one. Userinfo and a default port are ignored on both sides (see
- * pg_whitelist_drop_userinfo() and pg_whitelist_drop_default_port()), and a
+ * one. Userinfo and a default port are ignored and paths compared
+ * percent-decoded, on both sides (see pg_whitelist_drop_userinfo(),
+ * pg_whitelist_drop_default_port() and pg_whitelist_decode_resource()), and a
  * URL with a dot segment in its path never matches an entry with a path below
  * the root (see pg_whitelist_has_dot_segment()). */
 bool pg_whitelist_allows_url(const char *fileurl, bool privileged) {
@@ -137,6 +147,7 @@ bool pg_whitelist_allows_url(const char *fileurl, bool privileged) {
     url = pstrdup(fileurl);
     pg_whitelist_drop_userinfo(url);
     pg_whitelist_drop_default_port(url);
+    pg_whitelist_decode_resource(url);
     dotted = pg_whitelist_has_dot_segment(url);
     list = pstrdup(pg_whitelist_value);
     for (entry = strtok_r(list, ",", &saveptr); entry && !allowed; entry = strtok_r(NULL, ",", &saveptr)) {
@@ -145,6 +156,7 @@ bool pg_whitelist_allows_url(const char *fileurl, bool privileged) {
         while (len > 0 && isspace((unsigned char)entry[len - 1])) entry[--len] = '\0';
         pg_whitelist_drop_userinfo(entry);
         pg_whitelist_drop_default_port(entry);
+        pg_whitelist_decode_resource(entry);
         if (strncmp(entry, "http://", 7) && strncmp(entry, "https://", 8)) continue;
         if (dotted && pg_whitelist_entry_has_path(entry)) continue;
         if (pg_whitelist_url_prefix(url, entry)) allowed = true;
