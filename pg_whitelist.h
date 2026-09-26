@@ -33,4 +33,19 @@ void pg_whitelist_check_url(const char *fileurl, bool privileged);
  * instead). */
 void pg_whitelist_check_local(const char *fileurl, const char *realname, bool privileged);
 
+/* Same verdicts as pg_whitelist_check_url()/pg_whitelist_check_local(), but
+ * returned rather than raised: true means access is permitted. For callers
+ * that must answer a library asking whether it may proceed, where raising
+ * would longjmp out of that library's call stack and leave its state behind.
+ * pg_whitelist_allows_local() answers false, rather than raising, when
+ * realname cannot be resolved -- a caller probing candidate paths asks about
+ * files that need not exist. */
+bool pg_whitelist_allows_url(const char *fileurl, bool privileged);
+bool pg_whitelist_allows_local(const char *fileurl, const char *realname, bool privileged);
+
+/* Raise the refusal the predicates above only report, so a caller that acted
+ * on one can fail with the same error the check_*() entry points give instead
+ * of one of its own. Raises ERROR and so does not return. */
+void pg_whitelist_deny(const char *fileurl);
+
 #endif

@@ -12,7 +12,7 @@ void pg_whitelist_init(const char *guc_name) {
     DefineCustomStringVariable(guc_name, "Comma-separated file:// and http(s):// prefixes that may be accessed.", "For a privileged caller a non-empty list narrows access and an empty/unset one allows anything; for any other caller the list is the only grant and an empty/unset one denies everything.", &pg_whitelist_value, NULL, PGC_SUSET, 0, NULL, NULL, NULL);
 }
 
-static void pg_whitelist_deny(const char *fileurl) {
+void pg_whitelist_deny(const char *fileurl) {
     ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("permission denied to access \"%s\"", fileurl), errdetail("whitelist does not permit this file or URL for the current role.")));
 }
 
@@ -52,15 +52,12 @@ static bool pg_whitelist_url_prefix(const char *fileurl, const char *entry) {
  * "//host/..." fileurl never matches an entry (entries always carry an
  * explicit scheme), so only a privileged caller with no whitelist may use
  * one. */
-void pg_whitelist_check_url(const char *fileurl, bool privileged) {
+bool pg_whitelist_allows_url(const char *fileurl, bool privileged) {
     char *list, *entry, *saveptr;
     size_t len;
     bool allowed = false;
-    if (!pg_whitelist_is_url(fileurl)) return;
-    if (!pg_whitelist_value || !pg_whitelist_value[0]) {
-        if (privileged) return;
-        pg_whitelist_deny(fileurl);
-    }
+    if (!pg_whitelist_is_url(fileurl)) return true;
+    if (!pg_whitelist_value || !pg_whitelist_value[0]) return privileged;
     list = pstrdup(pg_whitelist_value);
     for (entry = strtok_r(list, ",", &saveptr); entry && !allowed; entry = strtok_r(NULL, ",", &saveptr)) {
         while (isspace((unsigned char)*entry)) entry++;
@@ -69,21 +66,22 @@ void pg_whitelist_check_url(const char *fileurl, bool privileged) {
         if ((!strncmp(entry, "http://", 7) || !strncmp(entry, "https://", 8)) && pg_whitelist_url_prefix(fileurl, entry)) allowed = true;
     }
     pfree(list);
-    if (!allowed) pg_whitelist_deny(fileurl);
+    return allowed;
 }
 
-void pg_whitelist_check_local(const char *fileurl, const char *realname, bool privileged) {
+void pg_whitelist_check_url(const char *fileurl, bool privileged) {
+    if (!pg_whitelist_allows_url(fileurl, privileged)) pg_whitelist_deny(fileurl);
+}
+
+bool pg_whitelist_allows_local(const char *fileurl, const char *realname, bool privileged) {
     char resolved[PATH_MAX];
     char resolved_entry[PATH_MAX];
     char *list, *entry, *saveptr;
     size_t len;
     bool allowed = false;
-    if (pg_whitelist_is_url(fileurl)) return;
-    if (!pg_whitelist_value || !pg_whitelist_value[0]) {
-        if (privileged) return;
-        pg_whitelist_deny(fileurl);
-    }
-    if (!realpath(realname, resolved)) ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("!realpath(\"%s\")", realname)));
+    if (pg_whitelist_is_url(fileurl)) return true;
+    if (!pg_whitelist_value || !pg_whitelist_value[0]) return privileged;
+    if (!realpath(realname, resolved)) return false;
     list = pstrdup(pg_whitelist_value);
     for (entry = strtok_r(list, ",", &saveptr); entry && !allowed; entry = strtok_r(NULL, ",", &saveptr)) {
         while (isspace((unsigned char)*entry)) entry++;
@@ -98,5 +96,9 @@ void pg_whitelist_check_local(const char *fileurl, const char *realname, bool pr
         }
     }
     pfree(list);
-    if (!allowed) pg_whitelist_deny(fileurl);
+    return allowed;
+}
+
+void pg_whitelist_check_local(const char *fileurl, const char *realname, bool privileged) {
+    if (!pg_whitelist_allows_local(fileurl, realname, privileged)) pg_whitelist_deny(fileurl);
 }
