@@ -34,7 +34,9 @@ static bool pg_whitelist_is_url(const char *s) {
  * libcups's httpSeparateURI() (which htmldoc fetches through) takes
  * everything before an '@' that precedes the first '/' as userinfo, so
  * "https://host?@evil.net/" or "https://host#@evil.net/" would connect to
- * evil.net. */
+ * evil.net. pg_whitelist_allows_url() already strips that userinfo (see
+ * pg_whitelist_drop_userinfo()), so this only still catches a URL with more
+ * than one such '@'. */
 static bool pg_whitelist_url_prefix(const char *fileurl, const char *entry) {
     size_t len = strlen(entry);
     const char *rest = fileurl + len;
@@ -43,6 +45,21 @@ static bool pg_whitelist_url_prefix(const char *fileurl, const char *entry) {
     if (*rest != '\0' && *rest != '/' && *rest != '?' && *rest != '#') return false;
     if (!strchr(strstr(entry, "://") + 3, '/') && rest[strcspn(rest, "@/")] == '@') return false;
     return true;
+}
+
+/* Drop userinfo -- everything up to an '@' that comes before the first '/'
+ * after "scheme://" -- from url, in place, the way libcups's httpSeparateURI()
+ * tells it from the host. What's left names the host the request actually
+ * goes to, which is all an entry is about: libcups sends the userinfo as
+ * credentials, htmldoc's file-access callback reports every request without
+ * it, and a user name in either the URL or an entry doesn't change where the
+ * request connects. */
+static void pg_whitelist_drop_userinfo(char *url) {
+    char *auth, *at;
+    if (!(auth = strstr(url, "://"))) return;
+    auth += 3;
+    at = auth + strcspn(auth, "@/");
+    if (*at == '@') memmove(auth, at + 1, strlen(at + 1) + 1);
 }
 
 /* Drop a default port -- ":80" for http, ":443" for https -- from the end of
@@ -107,10 +124,10 @@ static bool pg_whitelist_entry_has_path(const char *entry) {
  * path segment boundary (see pg_whitelist_url_prefix()). A scheme-relative
  * "//host/..." fileurl never matches an entry (entries always carry an
  * explicit scheme), so only a privileged caller with no whitelist may use
- * one. A default port is ignored on both sides (see
- * pg_whitelist_drop_default_port()), and a URL with a dot segment in its path
- * never matches an entry with a path below the root (see
- * pg_whitelist_has_dot_segment()). */
+ * one. Userinfo and a default port are ignored on both sides (see
+ * pg_whitelist_drop_userinfo() and pg_whitelist_drop_default_port()), and a
+ * URL with a dot segment in its path never matches an entry with a path below
+ * the root (see pg_whitelist_has_dot_segment()). */
 bool pg_whitelist_allows_url(const char *fileurl, bool privileged) {
     char *list, *entry, *saveptr, *url;
     size_t len;
@@ -118,6 +135,7 @@ bool pg_whitelist_allows_url(const char *fileurl, bool privileged) {
     if (!pg_whitelist_is_url(fileurl)) return true;
     if (!pg_whitelist_value || !pg_whitelist_value[0]) return privileged;
     url = pstrdup(fileurl);
+    pg_whitelist_drop_userinfo(url);
     pg_whitelist_drop_default_port(url);
     dotted = pg_whitelist_has_dot_segment(url);
     list = pstrdup(pg_whitelist_value);
@@ -125,6 +143,7 @@ bool pg_whitelist_allows_url(const char *fileurl, bool privileged) {
         while (isspace((unsigned char)*entry)) entry++;
         len = strlen(entry);
         while (len > 0 && isspace((unsigned char)entry[len - 1])) entry[--len] = '\0';
+        pg_whitelist_drop_userinfo(entry);
         pg_whitelist_drop_default_port(entry);
         if (strncmp(entry, "http://", 7) && strncmp(entry, "https://", 8)) continue;
         if (dotted && pg_whitelist_entry_has_path(entry)) continue;
